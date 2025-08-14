@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>موقع اسئلة انمي</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 700px; margin: 20px auto; padding: 12px; background: #f7f9fc; direction: rtl; }
+    h1,h2 { text-align: center; color:#222; margin:8px 0; }
+    #controls { display:flex; gap:8px; justify-content:center; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+    #score { font-weight:700; color:#0b69ff; }
+    .question, .add-question { background:#fff; padding:14px; margin-bottom:14px; border-radius:10px; box-shadow:0 4px 12px rgba(12,20,40,0.06); }
+    img { max-width:100%; border-radius:8px; display:block; margin:6px 0; object-fit:cover; }
+    input[type="text"], input[type="url"], textarea, button {
+      width:100%; padding:8px 10px; margin-top:8px; margin-bottom:10px; border-radius:6px; border:1px solid #d0d7e4; box-sizing:border-box; font-size:15px;
+    }
+    .row { display:flex; gap:8px; }
+    .row > * { flex:1; }
+    button { background:#0b69ff; color:white; cursor:pointer; border:none; padding:10px; }
+    button.secondary { background:#e6eefc; color:#0b69ff; border:1px solid #cfe1ff; }
+    button:hover { filter:brightness(.96); }
+    .result { margin-top:8px; font-weight:700; }
+    .small { font-size:13px; color:#666; }
+  </style>
+</head>
+<body>
+
+  <h1>موقع أسئلة أنمي</h1>
+
+  <div id="controls">
+    <div id="score">النقاط: 0</div>
+    <button id="reset-score" class="secondary">إعادة ضبط النقاط</button>
+    <div class="small">(كل إجابة صحيحة +1 ، خاطئة -1)</div>
+  </div>
+
+  <div id="quiz-container"></div>
+
+  <div class="add-question">
+    <h2>أضف سؤال أنمي جديد</h2>
+    <form id="add-question-form">
+      <label>رابط صورة الشخصية (URL):</label>
+      <input type="url" id="image-url" placeholder="https://..." required />
+      
+      <label>اسم الشخصية:</label>
+      <input type="text" id="character-name" placeholder="اكتب اسم الشخصية" required />
+      
+      <label>سؤال (اختياري):</label>
+      <textarea id="question-text" placeholder="مثلاً: من هو هذا الشخصية؟"></textarea>
+      
+      <button type="submit">أضف السؤال</button>
+    </form>
+  </div>
+
+  <script>
+    // ===== تخزين واسترجاع من localStorage =====
+    const STORAGE_Q = 'animeQuiz_questions_v1';
+    const STORAGE_SCORE = 'animeQuiz_score_v1';
+
+    // ===== حالة التطبيق =====
+    let score = Number(localStorage.getItem(STORAGE_SCORE) || 0);
+    let answered = new Set();
+    let questions = JSON.parse(localStorage.getItem(STORAGE_Q)) || [
+      { image:"https://i.pinimg.com/736x/cb/03/ce/cb03cebb51672e3df6eda6e7cc33bcb6.jpg", answer:"اوتشيها مادارا", question:"من هو هذا الشخصية؟" },
+      { image:"https://i.pinimg.com/1200x/97/76/bc/9776bc7b72009a691cb6f753c3c0cf7b.jpg", answer:"هاشيراما سينجو", question:"من هو هذا الشخصية؟" },
+      { image:"https://i.pinimg.com/736x/a6/35/05/a63505d2078c82849aca9c3042700819.jpg", answer:"توبيراما سينجو", question:"من هو هذا الشخصية؟" },
+      { image:"https://i.pinimg.com/736x/b0/73/a9/b073a98e6d76db6df7aec0a32c91bcea.jpg", answer:"توجي فيوشرو", question:"من هو هذا الشخصية؟" },
+          { image:"https://i.pinimg.com/1200x/f3/13/10/f313101a2ea59060f395fd2e3f6b42a3.jpg", answer:"اوتشيها ايتاشي", question:"من هو هذا الشخصية؟" },
+
+     ];
+    // ===== عناصر DOM =====
+    const scoreDiv = document.getElementById('score');
+    const quizContainer = document.getElementById('quiz-container');
+    const form = document.getElementById('add-question-form');
+    const resetBtn = document.getElementById('reset-score');
+
+    // ===== مساعدة: تطبيع النص العربي لتقليل تأثير التشكيل والهمزات =====
+    function normalizeArabic(str = '') {
+      return String(str)
+        .replace(/[\u064B-\u065F\u0610-\u061A\u06D6-\u06ED]/g, '') // إزالة التشكيل
+        .replace(/[آأإ]/g, 'ا')
+        .replace(/ى/g, 'ي')
+        .replace(/ؤ/g, 'و')
+        .replace(/ئ/g, 'ي')
+        .replace(/ة/g, 'ه')
+        .replace(/ـ/g, '')
+        .replace(/[^\u0600-\u06FF0-9a-z\s]/gi, '') // إزالة علامات ترقيم غريبة
+        .trim().toLowerCase();
+    }
+
+    // ===== تحديث وحفظ الحالة =====
+    function updateScoreDisplay() {
+      scoreDiv.textContent = `النقاط: ${score}`;
+      localStorage.setItem(STORAGE_SCORE, String(score));
+    }
+
+    function saveQuestions() {
+      localStorage.setItem(STORAGE_Q, JSON.stringify(questions));
+    }
+
+    // ===== عرض الأسئلة (DOM آمن بدون innerHTML للمحتوى الديناميكي) =====
+    function renderQuestions() {
+      quizContainer.innerHTML = '';
+      questions.forEach((q, index) => {
+        const card = document.createElement('div');
+        card.className = 'question';
+
+        const img = document.createElement('img');
+        img.src = q.image;
+        img.alt = 'شخصية أنمي';
+        img.onerror = function() { this.onerror = null; this.src = 'https://via.placeholder.com/600x360?text=No+Image'; };
+
+        const p = document.createElement('p');
+        p.textContent = q.question || 'خمن اسم هذه الشخصية:';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = 'اكتب اسم الشخصية هنا';
+        input.id = `input-${index}`;
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') checkAnswer(index); });
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = 'تحقق';
+        btn.addEventListener('click', () => checkAnswer(index));
+
+        const resultDiv = document.createElement('div');
+        resultDiv.id = `result-${index}`;
+        resultDiv.className = 'result';
+
+        card.appendChild(img);
+        card.appendChild(p);
+        card.appendChild(input);
+        card.appendChild(btn);
+        card.appendChild(resultDiv);
+
+        quizContainer.appendChild(card);
+      });
+    }
+
+    // ===== منطق التحقق مع مرونة في المقارنة =====
+    function checkAnswer(index) {
+      const inputEl = document.getElementById(`input-${index}`);
+      const resultDiv = document.getElementById(`result-${index}`);
+
+      if (answered.has(index)) {
+        resultDiv.style.color = 'orange';
+        resultDiv.textContent = 'لقد أجبت هذا السؤال بالفعل.';
+        return;
+      }
+
+      const userRaw = inputEl.value || '';
+      const user = normalizeArabic(userRaw);
+      const correctRaw = questions[index].answer || '';
+      const correct = normalizeArabic(correctRaw);
+
+      if (!user) {
+        resultDiv.style.color = 'red';
+        resultDiv.textContent = 'يرجى كتابة إجابة';
+        return;
+      }
+
+      // قبول الإجابة إذا تطابقت تماماً أو إذا كانت كل كلمات الإجابة الصحيحة موجودة في ما أدخله المستخدم
+      const correctWords = correct.split(/\s+/).filter(Boolean);
+      const allWordsPresent = correctWords.length === 0 ? false : correctWords.every(w => user.includes(w));
+      const isCorrect = user === correct || allWordsPresent;
+
+      answered.add(index);
+
+      if (isCorrect) {
+        resultDiv.style.color = 'green';
+        resultDiv.textContent = 'إجابة صحيحة! 👏';
+        score += 1;
+      } else {
+        resultDiv.style.color = 'red';
+        resultDiv.textContent = `إجابة خاطئة. الإجابة الصحيحة: ${questions[index].answer}`;
+        score -= 1;
+      }
+
+      updateScoreDisplay();
+    }
+
+    // ===== إضافة سؤال جديد =====
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const imageUrl = document.getElementById('image-url').value.trim();
+      const characterName = document.getElementById('character-name').value.trim();
+      const questionText = document.getElementById('question-text').value.trim();
+
+      if (!imageUrl || !characterName) {
+        alert('الرجاء إدخال رابط الصورة واسم الشخصية');
+        return;
+      }
+
+      questions.push({
+        image: imageUrl,
+        answer: characterName,
+        question: questionText || 'خمن اسم هذه الشخصية:'
+      });
+
+      saveQuestions();
+      form.reset();
+      renderQuestions();
+      alert('تم إضافة السؤال بنجاح!');
+    });
+
+    // ===== زر إعادة ضبط النقاط =====
+    resetBtn.addEventListener('click', () => {
+      if (!confirm('هل تريد إعادة ضبط النقاط وإعادة السماح بالإجابة على الأسئلة؟')) return;
+      score = 0;
+      answered.clear();
+      updateScoreDisplay();
+      // نعيد إزالة النتائج الظاهرة
+      document.querySelectorAll('.result').forEach(d => d.textContent = '');
+    });
+
+    // ===== تهيئة العرض =====
+    updateScoreDisplay();
+    renderQuestions();
+  </script>
+
+</body>
+</html>
